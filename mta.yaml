@@ -1,0 +1,173 @@
+_schema-version: '3.1'
+ID: risk-management
+version: 2.0.0
+description: "Template for the Learning Journey Building side-by-side extensions on SAP BTP"
+parameters:
+  enable-parallel-deployments: true
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npx cds build --production
+modules:
+  - name: risk-management-srv
+    type: nodejs
+    path: gen/srv
+    parameters:
+      buildpack: nodejs_buildpack
+    build-parameters:
+      builder: npm
+    provides:
+      - name: srv-api # required by consumers of CAP services (e.g. approuter)
+        properties:
+          srv-url: ${default-url}
+    requires:
+      - name: risk-management-auth
+      - name: risk-management-db
+      
+  - name: risk-management-db-deployer
+    type: hdb
+    path: gen/db
+    parameters:
+      buildpack: nodejs_buildpack
+    requires:
+      - name: risk-management-db
+
+  - name: risk-management
+    type: approuter.nodejs
+    path: app/router
+    parameters:
+      keep-existing-routes: true
+      disk-quota: 256M
+      memory: 256M
+    requires:
+      - name: srv-api
+        group: destinations
+        properties:
+          name: srv-api # must be used in xs-app.json as well
+          url: ~{srv-url}
+          forwardAuthToken: true
+      - name: risk-management-auth
+  # - name: risk-management-destination-content
+  #   type: com.sap.application.content
+  #   requires:
+  #   - name: risk-management-destination-service
+  #     parameters:
+  #       content-target: true
+  #   - name: risk-management_html_repo_host
+  #     parameters:
+  #       service-key:
+  #         name: risk-management_html_repo_host-key
+  #   - name: risk-management-auth
+  #     parameters:
+  #       service-key:
+  #         name: risk-management-auth-key
+  #   parameters:
+  #     content:
+  #       instance:
+  #         destinations:
+  #         - Name: risk-management_approuter_risk-management_html_repo_host
+  #           ServiceInstanceName: risk-management-html5-app-host-service
+  #           ServiceKeyName: risk-management_html_repo_host-key
+  #           sap.cloud.service: risk-management-approuter
+  #         - Name: risk-management_approuter_risk-management_auth
+  #           Authentication: OAuth2UserTokenExchange
+  #           ServiceInstanceName: risk-management-auth
+  #           ServiceKeyName: risk-management-auth-key
+  #           sap.cloud.service: risk-management-approuter
+  #         existing_destinations_policy: ignore
+  #   build-parameters:
+  #     no-source: true
+  # - name: risk-management-app-content
+  #   type: com.sap.application.content
+  #   path: .
+  #   requires:
+  #   - name: risk-management_html_repo_host
+  #     parameters:
+  #       content-target: true
+  #   build-parameters:
+  #     build-result: resources
+  #     requires:
+  #     - artifacts:
+  #       - risk-management.zip
+  #       name: risk-management
+  #       target-path: resources/
+  # - name: risk-management-ui
+  #   type: html5
+  #   path: app/risks
+  #   build-parameters:
+  #     build-result: dist
+  #     builder: custom
+  #     commands:
+  #     - npm install
+  #     - npm run build:cf
+  #     supported-platforms: []
+resources:
+  - name: risk-management-auth
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      path: ./xs-security.json
+      config:
+        xsappname: risk-management-${org}-${space}
+        tenant-mode: dedicated
+        role-collections:
+        - name: 'RiskManager-${space}'
+          description: Manage Risks
+          role-template-references:
+          - $XSAPPNAME.RiskManager
+        - name: 'RiskViewer-${space}'
+          description: View Risks
+          role-template-references:
+          - $XSAPPNAME.RiskViewer
+        oauth2-configuration: # <-- add this
+          redirect-uris:
+          # example: - https://risk-management-approuter.cfapps.eu10-004.hana.ondemand.com/login/callback
+          - https://risk-management.cfapps.us10-001.hana.ondemand.com/login/callback  
+          # - https://${org}-${space}-risk-management.cfapps.us10-001.hana.ondemand.com/login/callback
+          # - https://*.cfapps.us10-001.hana.ondemand.com/login/callback
+          #- https://097b7926trial-dev-risk-management.cfapps.us10-001.hana.ondemand.com/login/callback   
+  - name: risk-management-db
+    type: com.sap.xs.hdi-container
+    parameters:
+      service: hana
+      service-plan: hdi-shared
+  - name: risk-management-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+  # - name: risk-management-destination-service
+  #   type: org.cloudfoundry.managed-service
+  #   parameters:
+  #     config:
+  #       HTML5Runtime_enabled: true
+  #       init_data:
+  #         instance:
+  #           destinations:
+  #           - Authentication: NoAuthentication
+  #             Name: ui5
+  #             ProxyType: Internet
+  #             Type: HTTP
+  #             URL: https://ui5.sap.com
+  #           - Authentication: NoAuthentication
+  #             HTML5.DynamicDestination: true
+  #             HTML5.ForwardAuthToken: true
+  #             Name: risk-management-srv-api
+  #             ProxyType: Internet
+  #             Type: HTTP
+  #             URL: ~{srv-api/srv-url}
+  #           existing_destinations_policy: update
+  #       version: 1.0.0
+  #     service: destination
+  #     service-name: risk-management-destination-service
+  #     service-plan: lite
+  #   requires:
+  #   - name: srv-api
+  # - name: risk-management_html_repo_host
+  #   type: org.cloudfoundry.managed-service
+  #   parameters:
+  #     service: html5-apps-repo
+  #     service-name: risk-management-html5-app-host-service
+  #     service-plan: app-host
